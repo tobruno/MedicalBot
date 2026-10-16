@@ -1,12 +1,15 @@
 import json
 import time
+import sys
+import os
 
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 # WE IMPORT THE CORE LOGIC FROM YOUR EXISTING FILE
-from ontology_linker import extract_umls_cuis
+from retriever.ontology_linker import extract_umls_cuis
 
 # --- CONFIGURATION ---
-INPUT_JSON = "chunks/chunks_recursive_raw.json"
-OUTPUT_JSON = "chunks/chunks_recursive_with_ontology.json"
+INPUT_JSON = "chunking/chunks_semantic_with_context_v1.json"
+OUTPUT_JSON = "chunking/chunks_semantic_contextualised_with_ontology_v1.json"
 
 def enrich_chunks_with_cuis():
     try:

@@ -5,9 +5,9 @@ import os
 from datasets import load_dataset
 
 # --- KONFIGURACJA ---
-DATASET_NAME = "truehealth/liveqa"
+INPUT_FILE = "medredqa/medredqa_train.csv"
 SAMPLE_SIZE = 100  # Ile pytań chcesz wylosować do testów
-OUTPUT_FILE = "testing/liveqa_sampled_evaluated.csv"
+OUTPUT_FILE = "ragas/testing/medredqa_sampled_evaluated.csv"
 TOPICS_FILE = "encyclopedia/clean_list_of_entries.txt"
 
 def load_encyclopedia_topics():
@@ -22,21 +22,27 @@ def load_encyclopedia_topics():
 def download_and_sample_dataset():
     """Pobiera dataset z Hugging Face, usuwa puste wiersze w 'message' i zwraca próbkę jako DataFrame."""
     
-    print(f"📥 Pobieranie datasetu '{DATASET_NAME}' z Hugging Face...")
-    dataset = load_dataset(DATASET_NAME, split="train")
-    
+    print(f"📥 Pobieranie datasetu '{INPUT_FILE}'...")
+    dataset = pd.read_csv(INPUT_FILE)
+    dataset = dataset[dataset['Occupation'] != 'Medical Student']
+    # Wyrzucamy posty dłuższe niż 300 słów
+    dataset = dataset[dataset['Body'].apply(lambda x: len(str(x).split()) <= 250)]
+    dataset = dataset[dataset['Response Score']>20]
+    dataset = dataset.loc[dataset['Body'].str.contains('EDIT|UPDATE|CORRECTION|Sex:|Sex M|Sex F|photo|image|post|reddit|upvote|lawyer|sue|insurance|bill|cost|pro bono|EMTALA', case=False, na=False) == False]
     # Usuwanie wierszy, gdzie 'message' jest puste, None lub składa się tylko ze spacji
-    print("🧹 Usuwanie pustych wierszy w kolumnie 'message'...")
-    dataset = dataset.filter(
-        lambda example: example['message'] is not None and str(example['message']).strip() != ""
-    )
+    print("🧹 Usuwanie pustych wierszy w kolumnie 'Body'...")
+    dataset = dataset.dropna(subset=['Body'])
+    dataset = dataset.dropna(subset=['Response'])
+
+    print(f"📊 Liczba pytań po filtracji: {len(dataset)}")
     
     print(f"🔀 Losowanie próbki {SAMPLE_SIZE} pytań (seed=42)...")
     # Upewniamy się, że nie próbujemy pobrać więcej wierszy niż zostało po filtracji
-    actual_sample_size = min(SAMPLE_SIZE, len(dataset))
-    sampled_dataset = dataset.shuffle(seed=42).select(range(actual_sample_size))
+    #actual_sample_size = min(SAMPLE_SIZE, len(dataset))
+    sampled_dataset = dataset.sample(n=min(SAMPLE_SIZE, len(dataset)), random_state=42)
+    #sampled_dataset = dataset.shuffle(seed=42).select(range(actual_sample_size))
     
-    return sampled_dataset.to_pandas()
+    return sampled_dataset
 
 def assess_question_with_llm(question, encyclopedia_topics):
     """
@@ -44,38 +50,38 @@ def assess_question_with_llm(question, encyclopedia_topics):
     Działa w 100% offline, brak limitów zapytań (Rate Limits).
     """
     prompt = f"""
-<role>
-You are an expert Clinical Triage Assessor and Data Evaluator. 
-Your task is to evaluate a patient's medical question on two dimensions: Difficulty and Relevance to a specific medical encyclopedia.
-</role>
+        <role>
+        You are an expert Clinical Triage Assessor and Data Evaluator. 
+        Your task is to evaluate a patient's medical question on two dimensions: Difficulty and Relevance to a specific medical encyclopedia.
+        </role>
 
-<encyclopedia_index>
-{encyclopedia_topics}
-</encyclopedia_index>
+        <encyclopedia_index>
+        {encyclopedia_topics}
+        </encyclopedia_index>
 
-<question>
-{question}
-</question>
+        <question>
+        {question}
+        </question>
 
-<instructions>
-TASK 1: DIFFICULTY LEVEL
-Classify the question's complexity based on the required medical knowledge:
-- Level 1: Simple/Consumer (Basic health, general symptoms, common drug side effects).
-- Level 2: Intermediate/Nuanced (Specific clinical scenarios, drug interactions, medical history).
-- Level 3: Advanced/Professional (Highly specialized clinical questions, obscure pathologies, targeted treatment protocols).
+        <instructions>
+        TASK 1: DIFFICULTY LEVEL
+        Classify the question's complexity based on the required medical knowledge:
+        - Level 1: Simple/Consumer (Basic health, general symptoms, common drug side effects).
+        - Level 2: Intermediate/Nuanced (Specific clinical scenarios, drug interactions, medical history).
+        - Level 3: Advanced/Professional (Highly specialized clinical questions, obscure pathologies, targeted treatment protocols).
 
-TASK 2: ENCYCLOPEDIA RELEVANCE
-Check if the core subject of the <question> is covered by any of the topics listed in the <encyclopedia_index>.
-- Return 1 if the topic is explicitly listed or heavily implied by a listed category.
-- Return 0 if the topic is completely absent from the index.
+        TASK 2: ENCYCLOPEDIA RELEVANCE
+        Check if the core subject of the <question> is covered by any of the topics listed in the <encyclopedia_index>.
+        - Return 1 if the topic is explicitly listed or heavily implied by a listed category.
+        - Return 0 if the topic is completely absent from the index.
 
-PROCESS:
-Briefly analyze the question inside <thinking> tags. 
-Then, output EXACTLY two tags:
-<difficulty>X</difficulty> (where X is 1, 2, or 3)
-<relevance>Y</relevance> (where Y is 1 or 0)
-</instructions>
-"""
+        PROCESS:
+        Briefly analyze the question inside <thinking> tags. 
+        Then, output EXACTLY two tags:
+        <difficulty>X</difficulty> (where X is 1, 2, or 3)
+        <relevance>Y</relevance> (where Y is 1 or 0)
+        </instructions>
+        """
     try:
         # Wywołanie lokalnej instancji Ollamy
         response = ollama.chat(
@@ -107,8 +113,8 @@ def main():
     
     # 2. Pobranie danych
     df = download_and_sample_dataset()
-    df = df.drop_duplicates(subset=['message']) # Usuwamy duplikaty, jeśli istnieją
-    question_col = 'message' if 'message' in df.columns else df.columns[0]
+    question_col = 'Body' if 'Body' in df.columns else df.columns[0]
+    df = df.drop_duplicates(subset=[question_col]) # Usuwamy duplikaty, jeśli istnieją
     df = df.dropna(subset=[question_col])
     
     # 3. Przetwarzanie przez LLM

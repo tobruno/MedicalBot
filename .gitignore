@@ -1,5 +1,5 @@
+.env
 venv/
-.env/
 
 # Pliki systemowe Maca
 .DS_Store
@@ -7,9 +7,12 @@ venv/
 # Twoje duże pliki danych (pobierane lokalnie)
 *.pdf
 *.md
+*.json
+*.csv
 medical_qdrant_db/
 medredqa/
-data/
+encyclopedia/data/
+encyclopedia/archive/
 
 # Pliki tymczasowe Pythona
 __pycache__/

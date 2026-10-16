@@ -9,16 +9,19 @@ from langchain_groq import ChatGroq
 from langchain_openai import ChatOpenAI
 from langchain_ollama import OllamaEmbeddings
 from ragas import evaluate
-from ragas.metrics import (
+from ragas.metrics.collections import (
     context_precision,
-    context_revelancy,
+    ContextRelevance,
     faithfulness,
     answer_relevancy,
 )
 from ragas.run_config import RunConfig
 
 # Twoje importy z silnika RAG
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Ensure project root is on sys.path so top-level packages like `retriever` can be imported
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if PROJECT_ROOT not in sys.path:
+    sys.path.append(PROJECT_ROOT)
 from retriever.decomposer import decompose_query
 from retriever.retriever import MedicalRetriever
 from generator import generate_grounded_response
@@ -27,12 +30,15 @@ from generator import generate_grounded_response
 load_dotenv()
 
 # --- KONFIGURACJA ---
-QUESTIONS_FILE = "testing/medredqa_sampled_evaluated.csv"
-RESULTS_FILE = "testing/ragas_medredqa_results.csv"
-SAMPLE_SIZE = 1 # Ustaw limit pytań do testów (generowanie i ocena trwa!). Ustaw na None, aby przetworzyć wszystkie.
+# Use paths relative to this script so the script works when run from project root
+SCRIPT_DIR = os.path.dirname(__file__)
+QUESTIONS_FILE = os.path.join(SCRIPT_DIR, "liveqa_sampled_evaluated.csv")
+RESULTS_FILE = os.path.join(SCRIPT_DIR, "ragas_liveqa_results.csv")
+SAMPLE_SIZE = 50 # Ustaw limit pytań do testów (generowanie i ocena trwa!). Ustaw na None, aby przetworzyć wszystkie.
+COLLECTION_NAME = "semantic_contextualised_with_ontology_v1"  # Upewnij się, że to jest nazwa kolekcji, której używasz w Qdrant
 
 print("🔧 Inicjalizacja silnika Qdrant...")
-retriever_engine = MedicalRetriever()
+retriever_engine = MedicalRetriever(collection_name = COLLECTION_NAME)
 
 def run_medical_rag(user_complex_query):
     """
@@ -48,7 +54,7 @@ def run_medical_rag(user_complex_query):
     
     # 2. Wyszukiwanie
     for atomic_query in atomic_queries:
-        chunks = retriever_engine.retrieve(user_query=atomic_query, use_ontology=True, top_k=3)
+        chunks = retriever_engine.retrieve(user_query=atomic_query, use_ontology=False, top_k=3)
         for chunk in chunks:
             if chunk['text'] not in seen_chunk_texts:
                 all_retrieved_chunks.append(chunk)
@@ -59,7 +65,6 @@ def run_medical_rag(user_complex_query):
         all_retrieved_chunks = [{"text": "Lack of medical data."}]
         
     # 4. Generacja
-    # Zakładam, że Twoja funkcja zwraca słownik, z którego odpowiedź wyciągasz pod kluczem ["answer"]
     raw_response = generate_grounded_response(user_complex_query, all_retrieved_chunks)
     
     # Wyciągamy sam tekst odpowiedzi
@@ -91,19 +96,19 @@ def main():
     
     print("\n⚙️ Rozpoczynam dynamiczne generowanie odpowiedzi...")
     for idx, row in df.iterrows():
-        question = str(row.get("Body", ""))
+        question = str(row.get("message", ""))
         
         # --- NOWE: Pobieramy oryginalną odpowiedź eksperta z CSV ---
-        original_expert_answer = str(row.get("Response", "")) 
+        original_expert_answer = str(row.get("answer", "")) 
 
-        if pd.isna(row.get("Body")) or not question.strip():
+        if pd.isna(row.get("message")) or not question.strip():
             continue
             
         print(f"\n[{idx+1}/{len(df)}] Pytanie: {question[:100]}...")
         
         try:
-            answer, contexts = run_medical_rag(question)
-            clean_answer = answer.split("Disclaimer:")[0].strip()
+            answer, contexts = run_medical_rag(question) 
+            clean_answer = answer.split("DISCLAIMER:")[0].strip()
             clean_answer = re.sub(r'\s*\[Chunk[^\]]*\]', '', clean_answer)
             
             if "insufficient clinical data" in answer.lower() or "⚠️" in answer:
@@ -156,7 +161,7 @@ def main():
                 faithfulness,      
                 answer_relevancy,  
                 context_precision,
-                context_revelancy  # Teraz zadziała, bo dodaliśmy 'reference'
+                ContextRelevance()  # Teraz zadziała, bo dodaliśmy 'reference'
             ],
             llm=judge_llm,
             embeddings=judge_embeddings,

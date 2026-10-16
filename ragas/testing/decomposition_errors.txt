@@ -1,0 +1,16 @@
+MedRedQA
+32
+33
+34
+36
+38
+39
+40(valid)
+42(valid)
+44(valid)
+45(valid)
+46(valid)
+47
+48(valid)
+49
+50

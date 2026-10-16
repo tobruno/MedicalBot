@@ -5,9 +5,9 @@ import os
 from datasets import load_dataset
 
 # --- KONFIGURACJA ---
-INPUT_FILE = "medredqa/medredqa_train.csv"
+DATASET_NAME = "truehealth/liveqa"
 SAMPLE_SIZE = 100  # Ile pytań chcesz wylosować do testów
-OUTPUT_FILE = "testing/medredqa_sampled_evaluated.csv"
+OUTPUT_FILE = "testing/liveqa_sampled_evaluated.csv"
 TOPICS_FILE = "encyclopedia/clean_list_of_entries.txt"
 
 def load_encyclopedia_topics():
@@ -22,29 +22,23 @@ def load_encyclopedia_topics():
 def download_and_sample_dataset():
     """Pobiera dataset z Hugging Face, usuwa puste wiersze w 'message' i zwraca próbkę jako DataFrame."""
     
-    print(f"📥 Pobieranie datasetu '{INPUT_FILE}'...")
-    dataset = pd.read_csv(INPUT_FILE)
-    dataset = dataset[dataset['Occupation'] != 'Medical Student']
+    print(f"📥 Pobieranie datasetu '{DATASET_NAME}' z Hugging Face...")
+    dataset = load_dataset(DATASET_NAME, split="train")
     
     # Usuwanie wierszy, gdzie 'message' jest puste, None lub składa się tylko ze spacji
-    print("🧹 Usuwanie pustych wierszy w kolumnie 'Body'...")
-    dataset = dataset.dropna(subset=['Body'])
-    dataset = dataset.dropna(subset=['Response'])
+    print("🧹 Usuwanie pustych wierszy w kolumnie 'message'...")
+    dataset = dataset.filter(
+        lambda example: example['message'] is not None and str(example['message']).strip() != ""
+    )
+    dataset = dataset.loc[dataset['message'].str.contains('lawyer|sue|insurance|bill|cost|pro bono|EMTALA', case=False, na=False) == False]
 
-    
-    dataset = dataset[dataset['Response Score']>20]
-    dataset = dataset.loc[dataset['Body'].str.contains('EDIT|UPDATE|CORRECTION|Sex:|Sex M|Sex F|photo|image', case=False, na=False) == False]
-
-
-    print(f"📊 Liczba pytań po filtracji: {len(dataset)}")
     
     print(f"🔀 Losowanie próbki {SAMPLE_SIZE} pytań (seed=42)...")
     # Upewniamy się, że nie próbujemy pobrać więcej wierszy niż zostało po filtracji
-    #actual_sample_size = min(SAMPLE_SIZE, len(dataset))
-    sampled_dataset = dataset.sample(n=min(SAMPLE_SIZE, len(dataset)), random_state=42)
-    #sampled_dataset = dataset.shuffle(seed=42).select(range(actual_sample_size))
+    actual_sample_size = min(SAMPLE_SIZE, len(dataset))
+    sampled_dataset = dataset.shuffle(seed=42).select(range(actual_sample_size))
     
-    return sampled_dataset
+    return sampled_dataset.to_pandas()
 
 def assess_question_with_llm(question, encyclopedia_topics):
     """
@@ -115,8 +109,8 @@ def main():
     
     # 2. Pobranie danych
     df = download_and_sample_dataset()
-    question_col = 'Body' if 'Body' in df.columns else df.columns[0]
-    df = df.drop_duplicates(subset=[question_col]) # Usuwamy duplikaty, jeśli istnieją
+    df = df.drop_duplicates(subset=['message']) # Usuwamy duplikaty, jeśli istnieją
+    question_col = 'message' if 'message' in df.columns else df.columns[0]
     df = df.dropna(subset=[question_col])
     
     # 3. Przetwarzanie przez LLM

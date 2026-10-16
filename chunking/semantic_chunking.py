@@ -85,7 +85,7 @@ def save_chunks_to_vector_db(chunks, persist_directory="./medical_db"):
 # --- URUCHOMIENIE ---
 def main():
     try:
-        raw_text = load_markdown("encyclopedia/encyclopedia_processed copy.md")
+        raw_text = load_markdown("encyclopedia/encyclopedia_processed_short.md")
         print(f"Czy w tekście są nagłówki? {'#' in raw_text}")
         md_header_splits = prepare_markdown_for_splitting(raw_text)
         print(f"Liczba sekcji po nagłówkach: {len(md_header_splits)}")

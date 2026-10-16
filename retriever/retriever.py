@@ -6,14 +6,22 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from sentence_transformers import CrossEncoder
 from FlagEmbedding import BGEM3FlagModel
-from ontology_linker import extract_umls_cuis 
-
+from retriever.ontology_linker import extract_umls_cuis 
+from openai import OpenAI
 from groq import Groq 
 from dotenv import load_dotenv
 
 load_dotenv()
 groq_key = os.environ.get("GROQ_API_KEY")
-client = Groq(api_key=groq_key)
+# client = Groq(api_key=groq_key)
+
+client = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=os.environ.get("OPENROUTER_API_KEY")
+)
+
+QDRANT_URL = "http://localhost:6333"
+QDRANT_PATH = "./medical_qdrant_db"
 
 class MedicalRetriever:
     """
@@ -21,9 +29,11 @@ class MedicalRetriever:
     standard Semantic Reranking vs. Ontologically Boosted Reranking,
     combined with Recursive Context Retrieval.
     """
-    def __init__(self, qdrant_path="./medical_qdrant_db", collection_name="semantic_contextualized"):
+    def __init__(self, qdrant_path=QDRANT_URL, collection_name="semantic_raw_v1"):
         print("⚙️ Initializing Experimental Medical Retriever...")
-        self.q_client = QdrantClient(path=qdrant_path)
+        
+        # self.q_client = QdrantClient(path=qdrant_path)
+        self.q_client = QdrantClient(url=qdrant_path)
         self.collection = collection_name
         
         print("⏳ Loading Official BGE-M3 Model (8192 Token Limit)...")
@@ -32,7 +42,7 @@ class MedicalRetriever:
         print("⏳ Loading Cross-Encoder for Reranking...")
         self.reranker = CrossEncoder("BAAI/bge-reranker-v2-m3", max_length=1024) 
 
-    def retrieve(self, user_query, use_ontology=True, top_k=5, max_depth=2):
+    def retrieve(self, user_query, use_ontology=True, top_k=5, max_depth=2, relevance_threshold=0.0):
         """
         Main recursive retrieval pipeline.
         """
@@ -51,7 +61,8 @@ class MedicalRetriever:
             query_cuis=query_cuis, 
             use_ontology=use_ontology, 
             fetch_limit=20, 
-            top_k=top_k
+            top_k=top_k,
+            threshold=relevance_threshold
         )
         
         all_retrieved_chunks = list(current_chunks)
@@ -59,7 +70,10 @@ class MedicalRetriever:
         
         # 4. Recursive Evaluation Loop
         while depth < max_depth:
-            next_query = self._evaluate_context(user_query, current_chunks)
+            if not current_chunks:
+                 next_query = self._fallback_query_generator(user_query)
+            else:
+                 next_query = self._evaluate_context(user_query, current_chunks)
             
             if next_query == "COMPLETE":
                 print(f"✅ [RETRIEVAL] Gathered a complete chain of clinical evidence (Depth: {depth}).")
@@ -74,7 +88,8 @@ class MedicalRetriever:
                 query_cuis=query_cuis, 
                 use_ontology=use_ontology, 
                 fetch_limit=15, 
-                top_k=2 # We fetch fewer chunks in subsequent loops to avoid context overflow
+                top_k=2,
+                threshold=relevance_threshold # We fetch fewer chunks in subsequent loops to avoid context overflow
             )
             
             all_retrieved_chunks.extend(new_chunks)
@@ -83,7 +98,7 @@ class MedicalRetriever:
             
         return all_retrieved_chunks
 
-    def _fetch_and_rerank(self, search_query, eval_query, query_cuis, use_ontology, fetch_limit, top_k):
+    def _fetch_and_rerank(self, search_query, eval_query, query_cuis, use_ontology, fetch_limit, top_k, threshold):
         """Helper method to handle the repetitive Hybrid Search + Reranking logic."""
         # A. Hybrid Search
         candidates = self._hybrid_search(search_query, limit=fetch_limit)
@@ -93,9 +108,10 @@ class MedicalRetriever:
         # B. Reranking Logic (Cross-Encoder)
         sentence_pairs = [[eval_query, chunk["text"]] for chunk in candidates]
         scores = self.reranker.predict(sentence_pairs)
-        
+        valid_candidates = []
         for idx, chunk in enumerate(candidates):
             score = float(scores[idx])
+
             
             if use_ontology:
                 chunk_cuis = set(chunk["metadata"].get("umls_cuis", []))
@@ -105,7 +121,10 @@ class MedicalRetriever:
             
             chunk["final_score"] = score
 
-        ranked_candidates = sorted(candidates, key=lambda x: x["final_score"], reverse=True)
+            if score >= threshold: 
+                valid_candidates.append(chunk)
+
+        ranked_candidates = sorted(valid_candidates, key=lambda x: x["final_score"], reverse=True)
         return ranked_candidates[:top_k]
 
     def _hybrid_search(self, query_text, limit):
@@ -151,7 +170,17 @@ class MedicalRetriever:
             """
         try:
             #response = ollama.chat(model='llama3.1:8b', messages=[{'role': 'user', 'content': prompt}])
-            response =  client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{'role': 'user', 'content': prompt}], temperature=0.3)
+            
+            response = client.chat.completions.create(
+                model= "meta-llama/llama-3.1-8b-instruct", #"meta-llama/llama-3.1-8b-instruct:free", #"meta-llama/llama-3.3-70b-instruct:free", 
+                messages=[{'role': 'user', 'content': prompt}],
+                temperature=0.3)
+        
+
+            # response =  client.chat.completions.create(
+            #     model="llama-3.1-8b-instant",
+            #     messages=[{'role': 'user', 'content': prompt}],
+            #     temperature=0.3)
             #return response['message']['content'].strip()
             return response.choices[0].message.content.strip()
         except Exception:
@@ -169,16 +198,23 @@ class MedicalRetriever:
             <instructions>
             1. Briefly analyze the context against the question inside <thinking> tags.
             2. If complete, output exactly: <decision>COMPLETE</decision>
-            3. If information is missing, output <decision>SEARCH_QUERY</decision> with a specific 2-4 word English search phrase.
+            3. If information is missing, output <decision>SEARCH_QUERY: your specific search phrase</decision> with a specific 3-6 word English search phrase.
             </instructions>
             """
         try:
             # response = ollama.chat(model='llama3.1:8b', messages=[{'role': 'user', 'content': eval_prompt}])
             # raw_output = response['message']['content']
+            # response = client.chat.completions.create(
+            #     model="llama-3.1-8b-instant", 
+            #     messages=[{'role': 'user', 'content': eval_prompt}],
+            #     temperature=0.0 # Ewaluator musi być deterministyczny
+            # )
+            # raw_output = response.choices[0].message.content
+
             response = client.chat.completions.create(
-                model="llama-3.1-8b-instant", 
+                model="meta-llama/llama-3.1-8b-instruct", 
                 messages=[{'role': 'user', 'content': eval_prompt}],
-                temperature=0.0 # Ewaluator musi być deterministyczny
+                temperature=0.0 # Ewaluator MUSI być deterministyczny
             )
             raw_output = response.choices[0].message.content
 

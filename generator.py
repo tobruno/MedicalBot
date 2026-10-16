@@ -12,7 +12,6 @@ client = OpenAI(
 )
 
 
-
 load_dotenv()
 groq_key = os.environ.get("GROQ_API_KEY")
 #client = Groq(api_key=groq_key)
@@ -42,7 +41,7 @@ def generate_grounded_response(user_query, retrieved_chunks):
         1. STRICT GROUNDING: Answer the patient_query using ONLY facts explicitly stated in the <context> tags. You must completely suppress your internal parametric knowledge.
         2. ABSTENTION POLICY: If the <context> is irrelevant, or if it lacks sufficient clinical depth to answer the specific question safely, you MUST abort the generation.
         3. CITATION RULE: Every single sentence in your final answer that contains a medical claim MUST end with a citation to the specific chunk (e.g., "Aspirin can cause gastric irritation [Chunk 2].").
-        4. DISCLAIMER: If a successful answer is generated, always append a brief medical disclaimer at the very end.
+        4. DISCLAIMER: If a successful answer is generated, always append a brief medical disclaimer at the very end starting from uppercased "DISCLAIMER: ".
         </instructions>
 
         <process>

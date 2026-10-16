@@ -14,7 +14,7 @@ from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharac
 from langchain_huggingface import HuggingFaceEmbeddings
 
 # Importujemy naszą poprawioną funkcję z modułu obok
-from chunking.windowed_semantic_chunking import windowed_semantic_chunking
+from windowed_semantic_chunking import windowed_semantic_chunking
 
 #groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
@@ -22,7 +22,7 @@ from chunking.windowed_semantic_chunking import windowed_semantic_chunking
 INPUT_FILE = "encyclopedia/encyclopedia_processed.md"
 
 # 🎛️ PRZEŁĄCZNIKI EKSPERYMENTÓW
-USE_CONTEXTUALIZATION = True 
+USE_CONTEXTUALIZATION = False 
 CHUNKING_METHOD = "semantic"  # Wybierz: "recursive" lub "semantic"
 
 # Konfiguracja dla metody recursive
@@ -30,11 +30,11 @@ CHUNK_SIZE = 2000
 CHUNK_OVERLAP = 100
 
 # Konfiguracja dla metody semantic
-WINDOW_SIZE = 3
-PERCENTILE = 92
+WINDOW_SIZE = 1 #3
+PERCENTILE = 70 #92
 
 # Dynamiczne nazwy plików wyjściowych
-OUTPUT_JSON = f"chunking/chunks_{CHUNKING_METHOD}_{'with_context' if USE_CONTEXTUALIZATION else 'raw'}.json"
+OUTPUT_JSON = f"chunking/chunks_{CHUNKING_METHOD}_{'with_context' if USE_CONTEXTUALIZATION else 'raw'}_70.json"
 CACHE_PATH = f"chunking/context_cache_{CHUNKING_METHOD}.json"
 
 # Inicjalizacja modelu TYLKO jeśli jest wymagany do cięcia semantycznego
